@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0b0d12" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>GLB Viewer</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <style>
+    :root {
+      --bg: #0b0d12;
+      --panel: rgba(12, 16, 24, 0.82);
+      --line: #243044;
+      --txt: #e8eef7;
+      --muted: #8b9bb4;
+      --acc: #2dd4bf;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--txt); font-family: system-ui, sans-serif; overflow: hidden; }
+    #c { display: block; width: 100%; height: 100%; touch-action: none; }
+    header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+      display: flex; align-items: center; gap: 8px;
+      padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+      background: linear-gradient(180deg, #0b0d12 0%, rgba(11,13,18,0.2) 100%);
+    }
+    h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: .3px; }
+    .sp { flex: 1; }
+    button, select {
+      appearance: none; border: 1px solid var(--line); background: #141a24;
+      color: var(--txt); border-radius: 10px; padding: 8px 10px; font-size: 13px;
+    }
+    button.primary { background: var(--acc); color: #06221e; font-weight: 700; border-color: transparent; }
+    #hud {
+      position: fixed; left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom));
+      z-index: 5; background: var(--panel); backdrop-filter: blur(10px);
+      border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px;
+      font-size: 13px; color: var(--muted);
+    }
+    #hud b { color: var(--txt); }
+    #err { color: #fb7185; }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <header>
+    <h1>GLB Viewer</h1>
+    <div class="sp"></div>
+    <select id="preset" aria-label="Modèle démo">
+      <option value="">Démos…</option>
+    </select>
+    <button id="open" class="primary" type="button">Ouvrir .glb</button>
+    <input id="file" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" />
+  </header>
+  <div id="hud">Touche : tourner · pincer : zoom<br><span id="status">Prêt. Charge un GLB.</span></div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+    import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+
+    // Ajoute tes fichiers locaux ici : { name: "Kart", url: "./models/kart.glb" }
+    const MODELS = [
+      { name: "Helmet (démo)", url: "https://threejs.org/examples/models/gltf/DamagedHelmet/glTF-Binary/DamagedHelmet.glb" },
+      { name: "Duck (démo)", url: "https://threejs.org/examples/models/gltf/Duck/glTF-Binary/Duck.glb" }
+    ];
+
+    const canvas = document.getElementById("c");
+    const statusEl = document.getElementById("status");
+    const preset = document.getElementById("preset");
+    const setStatus = (t, err = false) => {
+      statusEl.innerHTML = t;
+      statusEl.id = err ? "err" : "status";
+    };
+
+    MODELS.forEach((m, i) => {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = m.name;
+      preset.appendChild(o);
+    });
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight, false);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b0d12);
+    const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 200);
+    camera.position.set(1.6, 1.1, 2.2);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 0.4, 0);
+
+    scene.add(new THREE.HemisphereLight(0xb7c7ff, 0x2a2118, 1.1));
+    const key = new THREE.DirectionalLight(0xffffff, 1.4);
+    key.position.set(3, 6, 4);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x88aaff, 0.35);
+    fill.position.set(-4, 1, -2);
+    scene.add(fill);
+    scene.add(new THREE.GridHelper(8, 16, 0x243044, 0x1a2230));
+
+    const loader = new GLTFLoader();
+    const draco = new DRACOLoader();
+    draco.setDecoderPath("https://www.gstatic.com/draco/v1/decoders/");
+    loader.setDRACOLoader(draco);
+
+    let current = null;
+    const clock = new THREE.Clock();
+    let mixer = null;
+
+    function fit(object) {
+      const box = new THREE.Box3().setFromObject(object);
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const dist = maxDim / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+      camera.near = Math.max(dist / 100, 0.01);
+      camera.far = dist * 100;
+      camera.updateProjectionMatrix();
+      camera.position.copy(center).add(new THREE.Vector3(dist * 0.7, dist * 0.45, dist * 0.9));
+      controls.target.copy(center);
+      controls.minDistance = maxDim * 0.2;
+      controls.maxDistance = maxDim * 12;
+      controls.update();
+    }
+
+    function clearModel() {
+      if (mixer) { mixer.stopAllAction(); mixer = null; }
+      if (current) {
+        scene.remove(current);
+        current.traverse((o) => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) {
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach((m) => {
+              Object.values(m).forEach((v) => { if (v && v.isTexture) v.dispose(); });
+              m.dispose();
+            });
+          }
+        });
+        current = null;
+      }
+    }
+
+    async function loadUrl(url, label) {
+      setStatus("Chargement… " + (label || url));
+      clearModel();
+      try {
+        const gltf = await loader.loadAsync(url);
+        current = gltf.scene;
+        scene.add(current);
+        if (gltf.animations && gltf.animations.length) {
+          mixer = new THREE.AnimationMixer(current);
+          gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+        }
+        fit(current);
+        setStatus("<b>" + (label || "GLB") + "</b> chargé. Tourne avec le doigt.");
+      } catch (e) {
+        console.error(e);
+        setStatus("Erreur de chargement. Fichier trop lourd, CORS, ou GLB invalide.", true);
+      }
+    }
+
+    document.getElementById("open").onclick = () => document.getElementById("file").click();
+    document.getElementById("file").onchange = (ev) => {
+      const f = ev.target.files && ev.target.files[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      loadUrl(url, f.name).finally(() => setTimeout(() => URL.revokeObjectURL(url), 30000));
+    };
+    preset.onchange = () => {
+      const i = Number(preset.value);
+      if (Number.isFinite(i) && MODELS[i]) loadUrl(MODELS[i].url, MODELS[i].name);
+    };
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight, false);
+    });
+
+    function tick() {
+      requestAnimationFrame(tick);
+      const dt = clock.getDelta();
+      if (mixer) mixer.update(dt);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    tick();
+
+    if (MODELS[0]) loadUrl(MODELS[0].url, MODELS[0].name);
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+  </script>
+</body>
+</html>
